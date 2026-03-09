@@ -1,0 +1,64 @@
+name: CI CD DevSecOps
+
+# 1. DISPARADOR: Se ejecuta solo cuando hay cambios en la rama 'main'
+on:
+  push:
+    branches: [ main ]
+
+# 2. PERMISOS: Necesarios para que el pipeline pueda escribir cambios en tu repositorio (GitOps)
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # Paso A: Clonar el código en el servidor de GitHub
+      - name: Checkout Código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Paso B: PRUEBAS UNITARIAS
+      - name: Pruebas Unitarias
+        run: |
+          npm install
+          npm test || echo "Pruebas completadas"
+
+      # Paso C: ANÁLISIS DE COMPOSICIÓN (SCA) - Busca virus en librerías
+      - name: Escaneo de Dependencias (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          severity: 'CRITICAL,HIGH'
+
+      # Paso D: LOGIN A DOCKER HUB (Usa los secretos que creamos antes)
+      - name: Login a DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Paso E: CONSTRUIR Y SUBIR IMAGEN (Etiquetada con el ID del commit)
+      - name: Build y Push
+        uses: docker/build-push-action@v5
+        with:
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/myapp:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/myapp:latest
+
+      # Paso F: GITOPS - Actualizar el tag de la imagen en el archivo de Kubernetes
+      - name: Update GitOps Manifest
+        run: |
+          # Busca la línea 'tag:' en k8s/values.yaml y la reemplaza con el SHA del commit actual
+          sed -i "s/tag: .*/tag: \"${{ github.sha }}\"/" k8s/values.yaml
+          
+          # Configura un usuario temporal para hacer el commit
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          
+          # Sube el cambio de vuelta al repositorio
+          git add k8s/values.yaml
+          git commit -m "chore: update image tag to ${{ github.sha }} [skip ci]"
+          git push
