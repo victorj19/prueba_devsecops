@@ -1,0 +1,3 @@
+image:
+  repository: victorj19/myapp
+  tag: "latest" # El pipeline cambiará este valor por el SHA del commit
